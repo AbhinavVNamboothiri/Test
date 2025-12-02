@@ -1,0 +1,139 @@
+<!--
+Simple single-file HTML frontend for your Python chatbot.
+
+Usage notes (backend expectations):
+- Frontend POSTs to POST /api/chat with JSON body: { "conversation": [ {"role": "system"|"user"|"assistant", "content": "..."}, ... ] }
+- Backend should respond with JSON: { "reply": "Assistant reply text" }
+
+If you want, I can also provide a minimal Flask route that wraps your existing get_assistant_reply() and exposes /api/chat.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Chatbot UI</title>
+  <style>
+    :root{--bg:#0f1724;--panel:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--bubble:#071226}
+    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    body{background:linear-gradient(180deg,#071428 0%, #071226 100%);display:flex;align-items:center;justify-content:center;padding:24px}
+    .app{width:100%;max-width:820px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;box-shadow:0 6px 30px rgba(2,6,23,0.6);overflow:hidden;display:flex;flex-direction:column;height:80vh}
+    header{padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;gap:12px}
+    header h1{font-size:16px;margin:0;color:white}
+    header p{margin:0;font-size:12px;color:var(--muted)}
+    .messages{flex:1;overflow:auto;padding:20px;display:flex;flex-direction:column;gap:12px;background:linear-gradient(180deg, rgba(255,255,255,0.00), rgba(255,255,255,0.01))}
+    .b{max-width:75%;padding:12px 14px;border-radius:12px;font-size:14px;line-height:1.4}
+    .user{align-self:flex-end;background:linear-gradient(90deg,#0ea5a4,#06b6d4);color:#021220;border-bottom-right-radius:4px}
+    .assistant{align-self:flex-start;background:rgba(255,255,255,0.02);color: #e6eef6;border-bottom-left-radius:4px}
+    .meta{font-size:11px;color:var(--muted);margin-bottom:6px}
+    .composer{padding:12px;border-top:1px solid rgba(255,255,255,0.03);display:flex;gap:8px;align-items:center}
+    .composer textarea{flex:1;resize:none;height:56px;padding:12px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:#e6eef6}
+    .composer button{background:linear-gradient(90deg,#06b6d4,#0ea5a4);border:none;padding:10px 14px;border-radius:8px;color:#021220;font-weight:600;cursor:pointer}
+    .small{font-size:12px;color:var(--muted)}
+    .loader{width:18px;height:18px;border-radius:50%;border:3px solid rgba(255,255,255,0.08);border-top-color:rgba(255,255,255,0.6);animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+</head>
+<body>
+  <div class="app" role="application">
+    <header>
+      <div style="display:flex;flex-direction:column">
+        <h1>Chatbot</h1>
+        <p class="small">Frontend that posts conversation to <code>/api/chat</code></p>
+      </div>
+      <div style="margin-left:auto" class="small">Local / Development use</div>
+    </header>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="composer">
+      <textarea id="input" placeholder="Type your message... (Shift+Enter for newline)" ></textarea>
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <script>
+    // Initial system instruction (match your Python script)
+    const SYSTEM_MESSAGE = { role: 'system', content: 'You are a helpful assistant. Keep answers concise.' };
+
+    // Conversation array that will be sent to the backend. We keep it small for demo.
+    const conversation = [ SYSTEM_MESSAGE ];
+
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+
+    function appendBubble(text, who='assistant'){
+      const wrap = document.createElement('div');
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = who === 'user' ? 'You' : 'Assistant';
+      const bubble = document.createElement('div');
+      bubble.className = 'b ' + (who === 'user' ? 'user' : 'assistant');
+      bubble.innerText = text;
+      wrap.appendChild(meta);
+      wrap.appendChild(bubble);
+      messagesEl.appendChild(wrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function sendMessage(){
+      const text = inputEl.value.trim();
+      if(!text) return;
+      // add user message locally
+      conversation.push({ role: 'user', content: text });
+      appendBubble(text, 'user');
+      inputEl.value = '';
+      sendBtn.disabled = true;
+
+      // show temporary loader bubble
+      const loadingWrap = document.createElement('div');
+      loadingWrap.style.alignSelf = 'flex-start';
+      loadingWrap.className = 'assistant';
+      const loader = document.createElement('div');
+      loader.className = 'loader';
+      loadingWrap.appendChild(loader);
+      messagesEl.appendChild(loadingWrap);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+
+      try{
+        // POST the full conversation to your backend
+        const res = await fetch('http://127.0.0.1:5000/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation })
+        });
+
+        if(!res.ok) throw new Error('Network response was not OK');
+        const data = await res.json();
+        const reply = data.reply || 'No reply from server';
+
+        // remove loader and show assistant reply
+        messagesEl.removeChild(loadingWrap);
+        appendBubble(reply, 'assistant');
+
+        // add assistant reply to conversation for context
+        conversation.push({ role: 'assistant', content: reply });
+      }catch(err){
+        messagesEl.removeChild(loadingWrap);
+        appendBubble('Error: ' + (err.message || 'Request failed'), 'assistant');
+        console.error(err);
+      }finally{
+        sendBtn.disabled = false;
+      }
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    inputEl.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' && !e.shiftKey){
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    // small helper: seed a welcome assistant message
+    appendBubble('Hello — I\'m ready. Ask me anything.', 'assistant');
+  </script>
+</body>
+</html>
